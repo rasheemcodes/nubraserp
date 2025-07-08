@@ -6,7 +6,7 @@ import {
   Body,
   Req,
   Res,
-  UseGuards,
+  // UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -18,8 +18,9 @@ import {
   JWT_ACCESS_EXPIRY,
   JWT_REFRESH_EXPIRY,
 } from './auth.constants';
-import { RolesGuard } from '../../guards/roles.gaurd';
-import { Roles } from '../../decorators/roles.decorator';
+// import { RolesGuard } from '../../guards/roles.gaurd';
+// import { Roles } from '../../decorators/roles.decorator';
+import { CreateUserDto } from './dto/createUser.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -34,17 +35,15 @@ export class AuthController {
   }
 
   /** Admin-only: create user + immediate magic-link SMS */
-  @UseGuards(RolesGuard)
-  @Roles('admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('admin')
   @Post('register')
   async register(
-    @Body('phone') phone: string,
-    @Body('email') email: string,
-    @Body('roles') assignments: { roleId: number; modules: string[] }[],
+    @Body() createUserDto: CreateUserDto, // CreateUserDto
     @Req() req: Request
   ) {
     const meta = this.buildMeta(req);
-    return this.auth.register(phone, email, assignments, meta);
+    return this.auth.register(createUserDto, meta);
   }
 
   /** Public: send a 24h SMS magic-link */
@@ -55,8 +54,8 @@ export class AuthController {
   }
 
   /** Admin-only: issue a permanent NFC magic token */
-  @UseGuards(RolesGuard)
-  @Roles('admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('admin')
   @Post('issue-magic-link')
   async issueMagicLink(@Body('userId') userId: number, @Req() req: Request) {
     const meta = this.buildMeta(req);

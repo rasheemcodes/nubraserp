@@ -30,6 +30,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { RolesService } from '../roles/roles.service';
+import { CreateUserDto } from './dto/createUser.dto';
 
 const TEMP_LINK_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
 const PERM_LINK_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000; // ~100 years
@@ -73,11 +74,10 @@ export class AuthService {
   }
 
   async register(
-    phone: string,
-    email: string,
-    assignments: { roleId: number }[],
+    dto: CreateUserDto,
     meta: Meta
   ) {
+    const { roles: assignments, ...userDto} = dto;
     const start = Date.now();
     let city = 'Unknown';
     try {
@@ -87,7 +87,7 @@ export class AuthService {
       const dup = await this.db
         .select()
         .from(users)
-        .where(or(eq(users.email, email), eq(users.phone, phone)))
+        .where(or(eq(users.email, userDto.email), eq(users.phone, userDto.phone)))
         .limit(1);
       if (dup.length) throw new BadRequestException('Phone or email in use');
 
@@ -104,7 +104,7 @@ export class AuthService {
       // 3) Create the user
       const [newUser] = await this.db
         .insert(users)
-        .values({ phone, email })
+        .values(userDto)
         .returning();
 
       // 4) Assign each role + modules
@@ -122,7 +122,7 @@ export class AuthService {
         { city, outcome: 'success', roles: roleIds }
       );
 
-      const { url } = await this.sendMagicLink(phone, meta);
+      const { url } = await this.sendMagicLink(userDto.phone, meta);
 
       return {
         id: newUser.id,

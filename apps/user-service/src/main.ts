@@ -13,9 +13,9 @@ async function bootstrap() {
 
   app.use(cookieParser());
   
-  // enable global CORS so cookie is sent
+  // enable global CORS so cookie is sent```
   app.enableCors({
-    origin: 'http://localhost:3000',
+    origin: 'http://localhost:4200',
     credentials: true,
   });
 

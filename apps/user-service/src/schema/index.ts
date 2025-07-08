@@ -16,6 +16,8 @@ export const userSchema = pgSchema("user_schema");
 
 export const users = userSchema.table("users", {
   id: serial("id").primaryKey(),
+  firstName: varchar("first_name", { length: 50 }).notNull(),
+  lastName: varchar("last_name", { length: 50 }).notNull(),
   phone: varchar("phone", { length: 20 }).unique().notNull(),
   email: varchar("email", { length: 255 }).unique(),
   isActive: dtBoolean("is_active").default(true),

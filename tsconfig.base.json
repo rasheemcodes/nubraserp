@@ -15,8 +15,8 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@my-workspace/ui": ["packages/ui/src/index.ts"],
-      "@nubras/infra": ["packages/infra/src/index.ts"]
+      "@nubras/infra": ["packages/infra/src/index.ts"],
+      "@nubras/ui": ["packages/ui/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

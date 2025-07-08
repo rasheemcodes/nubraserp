@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { InfraModule } from '@nubras/infra';
@@ -9,9 +9,11 @@ import { validationSchema } from './secrets.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
-import Redis from 'ioredis';
 import { RolesModule } from './roles/roles.module';
 import { AuthModule } from './auth/auth.module';
+import { AuthMiddleware } from './auth/auth.middleware';
+import { AuthService } from './auth/auth.service';
+import Redis from 'ioredis';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -60,6 +62,7 @@ import { AuthModule } from './auth/auth.module';
     ]),
     PassportModule,
     JwtModule.registerAsync({
+      global: true,
       imports: [ConfigModule],
       useFactory: (cs: ConfigService) => ({
         secret: cs.get('JWT_SECRET'),
@@ -68,11 +71,12 @@ import { AuthModule } from './auth/auth.module';
       inject: [ConfigService],
     }),
     AuthModule,
-    RolesModule
+    RolesModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    AuthService,
     {
       provide: 'REDIS_CLIENT',
       useFactory: (cs: ConfigService) => new Redis(cs.get('REDIS_URL')),
@@ -80,4 +84,8 @@ import { AuthModule } from './auth/auth.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes('api/v1/auth/register');
+  }
+}
