@@ -3,12 +3,15 @@
 import {
   Controller,
   Post,
+  Get,
   Body,
   Req,
   Res,
   // UseGuards,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { AuthService, Meta } from './auth.service';
@@ -18,9 +21,10 @@ import {
   JWT_ACCESS_EXPIRY,
   JWT_REFRESH_EXPIRY,
 } from './auth.constants';
-// import { RolesGuard } from '../../guards/roles.gaurd';
-// import { Roles } from '../../decorators/roles.decorator';
+import { AccessGuard } from '../../guards/roles.gaurd';
+import { RequireAccess } from '../../decorators/roles.decorator';
 import { CreateUserDto } from './dto/createUser.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('auth')
 export class AuthController {
@@ -35,8 +39,8 @@ export class AuthController {
   }
 
   /** Admin-only: create user + immediate magic-link SMS */
-  // @UseGuards(RolesGuard)
-  // @Roles('admin')
+  @RequireAccess('system', 'create')
+  @UseGuards(AccessGuard)
   @Post('register')
   async register(
     @Body() createUserDto: CreateUserDto, // CreateUserDto
@@ -54,8 +58,8 @@ export class AuthController {
   }
 
   /** Admin-only: issue a permanent NFC magic token */
-  // @UseGuards(RolesGuard)
-  // @Roles('admin')
+  @RequireAccess('system', 'create')
+  @UseGuards(AccessGuard)
   @Post('issue-magic-link')
   async issueMagicLink(@Body('userId') userId: number, @Req() req: Request) {
     const meta = this.buildMeta(req);
@@ -96,6 +100,7 @@ export class AuthController {
   }
 
   /** Public: send OTP SMS */
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('signin')
   async sendOtp(@Body('phone') phone: string, @Req() req: Request) {
     const meta = this.buildMeta(req);
@@ -103,6 +108,7 @@ export class AuthController {
   }
 
   /** Public: verify OTP → set JWTs in cookies */
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @Post('verify/otp')
   async verifyOtp(
@@ -117,22 +123,22 @@ export class AuthController {
       code,
       meta
     );
-
-    // set cookies
+    
+    // Common cookie settings
+    // Cookie options for both local development and production
     res.cookie(ACCESS_COOKIE_NAME, accessToken, {
       httpOnly: true,
       maxAge: this.ms(JWT_ACCESS_EXPIRY),
       sameSite: 'lax',
-      secure: true,
-      path: '/',
+      secure: false,
     });
     res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
       httpOnly: true,
       maxAge: this.ms(JWT_REFRESH_EXPIRY),
       sameSite: 'lax',
-      secure: true,
-      path: '/',
+      secure: false,
     });
+
 
     return { message: 'Logged in via OTP' };
   }
@@ -150,6 +156,32 @@ export class AuthController {
     res.clearCookie(REFRESH_COOKIE_NAME);
 
     return { message: 'Logged out.' };
+  }
+
+  /** Authenticated: verify user token and return user data */
+  @HttpCode(HttpStatus.OK)
+  @Post('verify')
+  async verifyUser(@Req() req: Request) {
+    const { userId } = (req as any).user;
+    const meta = this.buildMeta(req);
+    
+    return await this.auth.verifyUser(userId, meta);
+  }
+
+  /** Authenticated: verify user token and return user data (GET version) */
+  @Get('me')
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getCurrentUser(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    // Safety check - AuthMiddleware should have set req.user
+    if (!(req as any).user) {
+      console.error('AuthMiddleware did not set req.user - check middleware configuration');
+      throw new UnauthorizedException('Authentication required');
+    }
+    
+    const { userId } = (req as any).user;
+    const meta = this.buildMeta(req);
+    
+    return await this.auth.verifyUser(userId, meta);
   }
 
   /** helper to parse "15m"/"7d" into ms */

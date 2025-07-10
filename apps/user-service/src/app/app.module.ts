@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { InfraModule } from '@nubras/infra';
@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuthMiddleware } from './auth/auth.middleware';
 import { AuthService } from './auth/auth.service';
 import Redis from 'ioredis';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -86,6 +87,18 @@ import Redis from 'ioredis';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(AuthMiddleware).forRoutes('api/v1/auth/register');
+    // Define protected routes explicitly, including global prefix if set (e.g., 'api/v1')
+    // Adjust the paths and methods as needed for your application
+    consumer
+      .apply(AuthMiddleware)
+      .forRoutes(
+        // Auth routes that need authentication
+        { path: 'auth/me', method: RequestMethod.GET },
+        { path: 'auth/register', method: RequestMethod.POST },
+        { path: 'auth/logout', method: RequestMethod.POST },
+        // Roles routes that use AccessGuard (requires authenticated user)
+        { path: 'roles', method: RequestMethod.ALL },
+        // Add more protected routes as needed
+      );
   }
 }

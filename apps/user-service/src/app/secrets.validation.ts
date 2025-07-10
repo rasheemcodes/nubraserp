@@ -23,7 +23,6 @@ export const validationSchema = Joi.object({
     .required()
     .description('Twilio Auth Token'),
   TWILIO_PHONE_NUMBER: Joi.string()
-    .pattern(/^\+\d{10,15}$/)
     .required()
     .description('Twilio phone number (E.164 format)'),
 
