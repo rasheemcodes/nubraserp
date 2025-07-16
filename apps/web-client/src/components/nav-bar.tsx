@@ -9,7 +9,7 @@ import {
   Bookmark,
   ArrowUpRight,
   Menu,
-  X
+  X,
 } from 'lucide-react';
 import React, { useRef, useState, useEffect } from 'react';
 import { Button } from './ui/button';
@@ -33,11 +33,15 @@ export default function NavBar() {
   const [isScrolled, setIsScrolled] = useState(false);
   const { scrollY } = useScroll();
 
-  const navShow = useTransform(
-    scrollY,
-    [0, window.innerHeight * 0.1],
-    [-100, 0]
-  );
+  const [vh, setVh] = useState(100); // fallback
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setVh(window.innerHeight * 0.1);
+    }
+  }, []);
+
+  const navShow = useTransform(scrollY, [0, vh * 0.1], [-100, 0]);
 
   // Handle scroll
   useEffect(() => {
@@ -449,7 +453,10 @@ export default function NavBar() {
             </Button>
           </SheetTrigger>
 
-          <SheetContent side="right" className="w-[380px] sm:w-[500px] p-6 z-[10000]">
+          <SheetContent
+            side="right"
+            className="w-[380px] sm:w-[500px] p-6 z-[10000]"
+          >
             <SheetHeader>
               <SheetTitle className="text-xl font-serif">
                 Shopping Cart
