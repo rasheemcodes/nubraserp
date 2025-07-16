@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { InfraModule } from '@nubras/infra';
@@ -9,11 +14,15 @@ import { validationSchema } from './secrets.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
-import Redis from 'ioredis';
 import { RolesModule } from './roles/roles.module';
 import { AuthModule } from './auth/auth.module';
+import { AuthMiddleware } from './auth/auth.middleware';
+import { AuthService } from './auth/auth.service';
+import { MetricsModule } from '@nubras/metrics';
+
 @Module({
   imports: [
+    MetricsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema,
@@ -21,6 +30,13 @@ import { AuthModule } from './auth/auth.module';
     InfraModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
+      services: {
+        database: true, // Enable database (Drizzle)
+        twilio: true, // Enable Twilio for SMS
+        redis: true, // Enable Redis for caching/sessions
+        s3: false, // Disable S3 (not used in user-service)
+        rabbitmq: true,
+      },
       useFactory: (cfg: ConfigService) => ({
         database: {
           connectionString: cfg.get<string>('DATABASE_URL')!,
@@ -31,13 +47,13 @@ import { AuthModule } from './auth/auth.module';
           authToken: cfg.get<string>('TWILIO_AUTH_TOKEN')!,
           from: cfg.get<string>('TWILIO_PHONE_NUMBER')!,
         },
-        s3: {
-          bucket: cfg.get<string>('AWS_S3_BUCKET')!,
-          region: cfg.get<string>('AWS_REGION')!,
-          credentials: {
-            accessKeyId: cfg.get<string>('AWS_ACCESS_KEY')!,
-            secretAccessKey: cfg.get<string>('AWS_SECRET_KEY')!,
-          },
+        redis: {
+          url: cfg.get<string>('REDIS_URL')!,
+        },
+        rabbitmq: {
+          name: 'RABBITMQ_SERVICE',
+          urls: ['amqp://admin:admin123@localhost:5672'],
+          queue: 'system-service-queue',
         },
       }),
     }),
@@ -60,6 +76,7 @@ import { AuthModule } from './auth/auth.module';
     ]),
     PassportModule,
     JwtModule.registerAsync({
+      global: true,
       imports: [ConfigModule],
       useFactory: (cs: ConfigService) => ({
         secret: cs.get('JWT_SECRET'),
@@ -68,16 +85,26 @@ import { AuthModule } from './auth/auth.module';
       inject: [ConfigService],
     }),
     AuthModule,
-    RolesModule
+    RolesModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
-    {
-      provide: 'REDIS_CLIENT',
-      useFactory: (cs: ConfigService) => new Redis(cs.get('REDIS_URL')),
-      inject: [ConfigService],
-    },
+    AuthService,
+    // Remove the manual Redis client provider since it's now handled by InfraModule
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Define protected routes explicitly, including global prefix if set (e.g., 'api/v1')
+    consumer
+      .apply(AuthMiddleware)
+      .exclude(
+        { path: 'auth/signin', method: RequestMethod.POST },
+        { path: 'auth/verify/otp', method: RequestMethod.POST },
+        { path: 'auth/send-magic-link', method: RequestMethod.POST }
+      )
+      .forRoutes('*');
+  } 
+}
+ 

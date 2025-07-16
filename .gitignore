@@ -50,3 +50,5 @@ Thumbs.db
 out
 vite.config.*.timestamp*
 vitest.config.*.timestamp*apps/*/.env*
+
+vitest.config.*.timestamp*

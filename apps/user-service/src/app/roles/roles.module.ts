@@ -5,14 +5,14 @@ import { Reflector }  from '@nestjs/core';
 
 import { RolesController } from './roles.controller';
 import { RolesService }    from './roles.service';
-import { RolesGuard } from '../../guards/roles.gaurd';
+import { AccessGuard } from '../../guards/roles.gaurd';
 
 @Module({
   controllers: [RolesController],
   providers: [
     RolesService,
     Reflector,
-    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: AccessGuard },
   ],
   exports: [RolesService]
 })

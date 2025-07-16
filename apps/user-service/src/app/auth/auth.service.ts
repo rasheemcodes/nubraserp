@@ -6,8 +6,9 @@ import {
   BadRequestException,
   InternalServerErrorException,
   Inject,
+  ForbiddenException
 } from '@nestjs/common';
-import { DRIZZLE_CLIENT } from '@nubras/infra';
+import { DRIZZLE_CLIENT, RedisService } from '@nubras/infra';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { TwilioService } from '@nubras/infra';
 import IPData from 'ipdata';
@@ -21,7 +22,6 @@ import {
 } from '../../schema';
 import { and, desc, eq, gt, inArray, lte, or } from 'drizzle-orm';
 import { randomBytes, randomInt } from 'crypto';
-import type { Redis } from 'ioredis';
 import {
   JWT_ACCESS_EXPIRY,
   JWT_REFRESH_EXPIRY,
@@ -30,6 +30,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { RolesService } from '../roles/roles.service';
+import { CreateUserDto } from './dto/createUser.dto';
+import { SecurityService } from './services/security.service';
 
 const TEMP_LINK_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
 const PERM_LINK_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000; // ~100 years
@@ -55,6 +57,10 @@ export enum AuthAction {
   MAGIC_LINK_SEND = 'auth.magicLinkSend',
   MAGIC_LINK_ISSUE = 'auth.magicLinkIssue',
   MAGIC_LINK_VERIFY = 'auth.magicLinkVerify',
+  // Security-related actions
+  RATE_LIMIT_EXCEEDED = 'auth.rateLimitExceeded',
+  ACCOUNT_LOCKED = 'auth.accountLocked',
+  FAILED_ATTEMPT = 'auth.failedAttempt',
 }
 
 @Injectable()
@@ -63,21 +69,18 @@ export class AuthService {
 
   constructor(
     @Inject(DRIZZLE_CLIENT) private db: ReturnType<typeof drizzle>,
-    @Inject('REDIS_CLIENT') private redis: Redis,
+    private readonly redis: RedisService,
     private readonly twilio: TwilioService,
     private readonly cfg: ConfigService,
     private readonly jwtService: JwtService,
-    private readonly rolesService: RolesService
+    private readonly rolesService: RolesService,
+    private readonly security: SecurityService // Add security service
   ) {
     this.ipdata = new IPData(this.cfg.get('IPDATA_API_KEY'));
   }
 
-  async register(
-    phone: string,
-    email: string,
-    assignments: { roleId: number }[],
-    meta: Meta
-  ) {
+  async register(dto: CreateUserDto, meta: Meta) {
+    const { roles: assignments, ...userDto } = dto;
     const start = Date.now();
     let city = 'Unknown';
     try {
@@ -87,7 +90,9 @@ export class AuthService {
       const dup = await this.db
         .select()
         .from(users)
-        .where(or(eq(users.email, email), eq(users.phone, phone)))
+        .where(
+          or(eq(users.email, userDto.email), eq(users.phone, userDto.phone))
+        )
         .limit(1);
       if (dup.length) throw new BadRequestException('Phone or email in use');
 
@@ -102,10 +107,7 @@ export class AuthService {
       }
 
       // 3) Create the user
-      const [newUser] = await this.db
-        .insert(users)
-        .values({ phone, email })
-        .returning();
+      const [newUser] = await this.db.insert(users).values(userDto).returning();
 
       // 4) Assign each role + modules
       for (const { roleId } of assignments) {
@@ -122,7 +124,7 @@ export class AuthService {
         { city, outcome: 'success', roles: roleIds }
       );
 
-      const { url } = await this.sendMagicLink(phone, meta);
+      const { url } = await this.sendMagicLink(userDto.phone, meta);
 
       return {
         id: newUser.id,
@@ -147,30 +149,99 @@ export class AuthService {
     const start = Date.now();
     let city = 'Unknown';
 
+    console.log(`[OTP Debug] Starting OTP send process for phone: ${phone.slice(0, 6)}***`);
+
     try {
       city = (await this.ipdata.lookup(meta.ip)).city || city;
+      console.log(`[OTP Debug] IP Location resolved: ${city}`);
+
+      // Check if account is locked
+      const isLocked = await this.security.isAccountLocked(phone);
+      console.log(`[OTP Debug] Account lock status: ${isLocked}`);
+      
+      if (isLocked) { 
+        const remainingTime = await this.security.getLockoutTimeRemaining(phone);
+        await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
+          city,
+          outcome: 'blocked',
+          phone,
+          remainingTimeSeconds: remainingTime,
+        });
+        throw new UnauthorizedException('Account temporarily locked due to security concerns');
+      }
+
+      // Rate limiting check
+      console.log(`[OTP Debug] Checking rate limits`);
+      await this.security.checkRateLimit(phone, 'otp_request');
+
+      console.log(`[OTP Debug] Loading user with roles`);
       const user = await this.loadUserWithRoles(phone, start, meta);
+      console.log(`[OTP Debug] User found with ID: ${user.id}`);
 
-      const code = await this.createOtp(phone, OtpType.LOGIN);
-      await this.twilio.sendOtp(`+971${phone}`, code);
+      try {
+        console.log(`[OTP Debug] Generating OTP code`);
+        const code = await this.createOtp(phone, OtpType.LOGIN);
+        console.log(`[OTP Debug] OTP generated successfully`);
 
-      await this.audit(
-        user.id,
-        AuthAction.SEND_OTP,
-        'AuthService',
-        meta,
-        start,
-        { city, outcome: 'success' }
-      );
+        console.log(`[OTP Debug] Attempting to send OTP via Twilio`);
+        const formattedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+        console.log(`[OTP Debug] Formatted phone number: ${formattedPhone.slice(0, 6)}***`);
+        
+        await this.twilio.sendOtp(formattedPhone, code);
+        console.log(`[OTP Debug] Twilio OTP send successful`);
+      } catch (error) {
+        console.error(`[OTP Debug] Failed to send OTP:`, {
+          error: error.message,
+          code: error.code,
+          status: error.status,
+          moreInfo: error.moreInfo,
+          details: error.details
+        });
+
+        if (error.code === 20003) {
+          throw new BadRequestException('Invalid phone number format');
+        }
+        if (error.code === 20404) {
+          throw new BadRequestException('Phone number not found or invalid');
+        }
+        if (error.message.includes('Permission to send an SMS has not been enabled')) {
+          throw new ForbiddenException('SMS sending to this region is not permitted.');
+        }
+        throw new InternalServerErrorException(`Twilio Error: ${error.message}`);
+      }
+
+      await this.audit(user.id, AuthAction.SEND_OTP, 'AuthService', meta, start, {
+        city,
+        outcome: 'success',
+      });
+
+      console.log(`[OTP Debug] OTP process completed successfully`);
       return { message: 'OTP sent.' };
     } catch (err) {
+      console.error(`[OTP Debug] Process failed:`, {
+        error: err.message,
+        type: err.constructor.name,
+        stack: err.stack
+      });
+
+      // Record failed attempt for rate limiting
+      if (!(err instanceof NotFoundException)) {
+        await this.security.recordFailedAttempt(phone, 'otp_request');
+      }
+
       await this.audit(null, AuthAction.SEND_OTP, 'AuthService', meta, start, {
         city,
         outcome: 'failure',
         error: err.message,
+        phone,
       });
+
       if (err instanceof NotFoundException) throw err;
-      throw new InternalServerErrorException('Could not send OTP');
+      if (err instanceof ForbiddenException) throw err;
+      if (err instanceof UnauthorizedException) throw err;
+      if (err instanceof BadRequestException) throw err;
+      
+      throw new InternalServerErrorException('Could not send OTP: ' + err.message);
     }
   }
 
@@ -181,44 +252,71 @@ export class AuthService {
     try {
       city = (await this.ipdata.lookup(meta.ip)).city || city;
 
+      // Check if account is locked
+      if (await this.security.isAccountLocked(phone)) {
+        const remainingTime = await this.security.getLockoutTimeRemaining(phone);
+        await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
+          city,
+          outcome: 'blocked',
+          phone,
+          remainingTimeSeconds: remainingTime,
+        });
+        throw new UnauthorizedException('Account temporarily locked');
+      }
+
+
+      // Rate limiting check
+      await this.security.checkRateLimit(phone, 'otp_verify');
+
       const otp = await this.loadValidOtp(phone, OtpType.LOGIN, code);
       await this.db
         .update(otpCodes)
         .set({ used: true })
         .where(eq(otpCodes.id, otp.id));
 
-      const user = await this.loadBaseUser(phone);
-
-      // ← NEW: fetch their merged module→permissions map
+      const user = await this.loadUserWithRoles(phone, start, meta);
       const accessRules = await this.rolesService.getUserEffective(user.id);
+
+      // Ensure accessRules is in the correct format for issueNewTokens
+      // Convert accessRules (Record<string, Record<string, boolean>>) to { module: string; permissions: Record<string, boolean>; }[]
+      const formattedAccessRules = Object.entries(accessRules).map(([module, permissions]) => ({
+        module,
+        permissions,
+      }));
+
       const { accessToken, refreshToken } = await this.issueNewTokens(
         { id: user.id, phone: user.phone },
-        accessRules
+        formattedAccessRules
       );
 
       await this.storeRefreshToken(user.id, refreshToken);
 
-      await this.audit(
-        user.id,
-        AuthAction.VERIFY_OTP,
-        'AuthService',
-        meta,
-        start,
-        { city, outcome: 'success' }
-      );
+      // Clear failed attempts on successful verification
+      await this.security.clearFailedAttempts(phone, 'otp_verify');
+
+      await this.audit(user.id, AuthAction.VERIFY_OTP, 'AuthService', meta, start, {
+        city,
+        outcome: 'success',
+      });
+
       return { accessToken, refreshToken };
     } catch (err) {
-      await this.audit(
-        null,
-        AuthAction.VERIFY_OTP,
-        'AuthService',
-        meta,
-        start,
-        { city, outcome: 'failure', error: err.message }
-      );
-      throw new UnauthorizedException('Invalid or expired OTP');
+      // Record failed attempt for security
+      await this.security.recordFailedAttempt(phone, 'otp_verify');
+
+      await this.audit(null, AuthAction.VERIFY_OTP, 'AuthService', meta, start, {
+        city,
+        outcome: 'failure',
+        error: err.message,
+        phone,
+      });
+
+      if (err instanceof BadRequestException) throw err;
+      if (err instanceof UnauthorizedException) throw err;
+      
+      throw new InternalServerErrorException('OTP verification failed');
     }
-  }
+  } 
 
   async logout(userId: number, meta: Meta) {
     const start = Date.now();
@@ -229,58 +327,168 @@ export class AuthService {
     return { message: 'Logged out.' };
   }
 
+  async verifyUser(userId: number, meta: Meta) {
+    const start = Date.now();
+    let city = 'Unknown';
+    try {
+      city = (await this.ipdata.lookup(meta.ip)).city || city;
+
+      // Load user with roles
+      const user = await this.loadBaseUserById(userId);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
+      // Get all role IDs for the user
+      const userRoleIds = await this.db
+        .select({ roleId: userRoles.roleId })
+        .from(userRoles)
+        .where(eq(userRoles.userId, userId));
+
+      // Get access for each role
+      const userRoleAccess = await this.db
+        .select({ access: roles.access })
+        .from(roles)
+        .where(inArray(roles.id, userRoleIds.map(r => r.roleId)));
+
+      // Flatten all role access into a single array
+      const combinedAccess = userRoleAccess.reduce((acc, role) => {
+        if (Array.isArray(role.access)) {
+          return [...acc, ...role.access];
+        }
+        return acc;
+      }, [] as Array<{ module: string; permissions: Record<string, boolean> }>);
+
+      // Audit & return
+      await this.audit(userId, AuthAction.VERIFY_USER, 'AuthService', meta, start, {
+        city,
+        outcome: 'success',
+      });
+
+      return {
+        id: user.id,
+        phone: user.phone,
+        email: user.email,
+        roles: combinedAccess,
+      };
+    } catch (err) {
+      await this.audit(userId, AuthAction.VERIFY_USER, 'AuthService', meta, start, {
+        city,
+        outcome: 'failure',
+        error: err.message,
+      });
+      throw err;
+    }
+  }
+
   // —————————————————————————————————————————
   // Internal helpers
   // —————————————————————————————————————————
 
   private async loadUserWithRoles(phone: string, start: number, meta: Meta) {
-    // 1) load the user row
-    const [u] = await this.db
-      .select()
-      .from(users)
-      .where(eq(users.phone, phone))
-      .limit(1);
-
-    if (!u) {
-      await this.audit(
-        null,
-        AuthAction.VERIFY_USER,
-        'AuthService',
-        meta,
-        start,
-        { outcome: 'failure', error: `User ${phone} not found` }
-      );
-      throw new NotFoundException(`User ${phone} not found`);
+    const user = await this.loadBaseUser(phone);
+    if (!user) {
+      await this.audit(null, AuthAction.FAILED_ATTEMPT, 'AuthService', meta, start, {
+        outcome: 'failure',
+        reason: 'user_not_found',
+        phone,
+      });
+      throw new NotFoundException('User not found');
     }
 
-    // 2) load their role names
-    const roleRows = await this.db
-      .select({ name: roles.name })
+    // Load all roles for the user
+    const userRoleIds = await this.db
+      .select({ roleId: userRoles.roleId })
       .from(userRoles)
-      .innerJoin(roles, eq(userRoles.roleId, roles.id))
-      .where(eq(userRoles.userId, u.id));
+      .where(eq(userRoles.userId, user.id));
 
-    const roleNames = roleRows.map((r) => r.name);
+    if (!userRoleIds.length) {
+      throw new UnauthorizedException('User has no assigned roles');
+    }
 
-    // 3) audit success and return combined
-    await this.audit(u.id, AuthAction.VERIFY_USER, 'AuthService', meta, start, {
-      outcome: 'success',
-    });
+    // Load role access data
+    const roleAccess = await this.db
+      .select({ access: roles.access })
+      .from(roles)
+      .where(inArray(roles.id, userRoleIds.map(r => r.roleId)));
 
-    // return a new object with a `roles` field
-    return { ...u, roles: roleNames };
+    // Merge access from all roles
+    const mergedAccess = this.mergeRoleAccess(roleAccess.map(r => r.access));
+
+    return {
+      ...user,
+      access: mergedAccess
+    };
+  }
+
+  /**
+   * Merges access rules from multiple roles, combining permissions
+   * If any role grants a permission (true), it takes precedence over false
+   * This ensures maximum privilege is respected when a user has multiple roles
+   * Roles with more true permissions take precedence for that module
+   */
+  private mergeRoleAccess(roleAccess: Array<Array<{ module: string; permissions: Record<string, boolean> }>>) {
+    const moduleMap = new Map<string, Record<string, boolean>>();
+
+    // Iterate through each role's access array
+    for (const roleModules of roleAccess) {
+      for (const moduleAccess of roleModules) {
+        const { module, permissions } = moduleAccess;
+        
+        // Get or create permissions object for this module
+        const existingPermissions = moduleMap.get(module) || {};
+        
+        // Count true values in both permission sets
+        const existingTrueCount = this.countTruePermissions(existingPermissions);
+        const newTrueCount = this.countTruePermissions(permissions);
+        
+        // If new permissions have more true values, use them as base
+        const basePermissions = newTrueCount > existingTrueCount ? { ...permissions } : { ...existingPermissions };
+        
+        // Merge permissions - if any permission is true in either set, make it true
+        for (const [perm, granted] of Object.entries(permissions)) {
+          if (granted || existingPermissions[perm]) {
+            basePermissions[perm] = true;
+          }
+        }
+        
+        moduleMap.set(module, basePermissions);
+      }
+    }
+
+    // Convert map back to array format
+    return Array.from(moduleMap.entries()).map(([module, permissions]) => ({
+      module,
+      permissions
+    }));
+  }
+
+  /**
+   * Helper to check if a permission object has more true values than another
+   * Used for determining which role's permissions should take precedence
+   */
+  private countTruePermissions(permissions: Record<string, boolean>): number {
+    return Object.values(permissions).filter(v => v === true).length;
   }
 
   private async createOtp(identifier: string, type: OtpType) {
+    console.log(`[OTP Debug] Creating new OTP for ${identifier.slice(0, 6)}***`);
     const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-    await this.db.insert(otpCodes).values({
-      identifier,
-      type,
-      code,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-      used: false,
-    });
-    return code;
+    
+    try {
+      await this.db.insert(otpCodes).values({
+        identifier,
+        type,
+        code,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        used: false,
+      });
+      console.log(`[OTP Debug] OTP stored in database successfully`);
+      return code;
+    } catch (error) {
+      console.error(`[OTP Debug] Failed to store OTP:`, error);
+      throw error;
+    }
   }
 
   private async loadValidOtp(identifier: string, type: OtpType, code: string) {
@@ -306,25 +514,40 @@ export class AuthService {
 
   async issueNewTokens(
     user: { id: number; phone: string },
-    accessRules: Record<string, Record<string, boolean>>
+    access: Array<{ module: string; permissions: Record<string, boolean> }>
   ) {
-    const payload = { sub: user.id, phone: user.phone, access: accessRules };
-    const access = this.jwtService.sign(payload, {
-      secret: this.cfg.get('JWT_SECRET'),
-      expiresIn: JWT_ACCESS_EXPIRY,
-    });
-    const refresh = this.jwtService.sign(payload, {
-      secret: this.cfg.get('JWT_REFRESH_SECRET'),
-      expiresIn: JWT_REFRESH_EXPIRY,
-    });
-    return { accessToken: access, refreshToken: refresh };
+    const accessToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        phone: user.phone,
+        access
+      },
+      {
+        secret: this.cfg.get('JWT_SECRET'),
+        expiresIn: JWT_ACCESS_EXPIRY,
+      }
+    );
+
+    const refreshToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        phone: user.phone,
+        access
+      },
+      {
+        secret: this.cfg.get('JWT_REFRESH_SECRET'),
+        expiresIn: JWT_REFRESH_EXPIRY,
+      }
+    );
+
+
+    return { accessToken, refreshToken };
   }
 
   async storeRefreshToken(userId: number, token: string) {
     await this.redis.set(
       `${REDIS_REFRESH_PREFIX}${userId}`,
       token,
-      'EX',
       this.expirySeconds(JWT_REFRESH_EXPIRY)
     );
   }
@@ -512,9 +735,17 @@ export class AuthService {
       const accessRules = await this.rolesService.getUserEffective(user.id);
 
       // 4) issue tokens
+      // Ensure accessRules is transformed to the expected array format to prevent type errors and potential privilege escalation (OWASP A01:2021 - Broken Access Control)
+      const formattedAccessRules = Object.entries(accessRules).map(
+        ([module, permissions]) => ({
+          module,
+          permissions,
+        })
+      );
+
       const { accessToken, refreshToken } = await this.issueNewTokens(
         { id: user.id, phone: user.phone },
-        accessRules
+        formattedAccessRules
       );
 
       await this.storeRefreshToken(user.id, refreshToken);

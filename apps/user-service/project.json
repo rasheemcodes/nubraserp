@@ -12,6 +12,7 @@
         "command": "webpack-cli build",
         "args": ["node-env=production"]
       },
+      "defaultConfiguration": "development",
       "configurations": {
         "development": {
           "args": ["node-env=development"]
@@ -35,7 +36,7 @@
           "buildTarget": "user-service:build:development"
         },
         "production": {
-          "buildTarget": "user-service:build:production"
+          "buildTarget": "user-service:build:development"
         }
       }
     },

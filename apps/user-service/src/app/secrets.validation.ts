@@ -23,22 +23,29 @@ export const validationSchema = Joi.object({
     .required()
     .description('Twilio Auth Token'),
   TWILIO_PHONE_NUMBER: Joi.string()
-    .pattern(/^\+\d{10,15}$/)
     .required()
     .description('Twilio phone number (E.164 format)'),
-
-  // AWS S3
-  AWS_S3_BUCKET: Joi.string().required().description('S3 bucket name'),
-  AWS_REGION: Joi.string().required().description('AWS region'),
-  AWS_ACCESS_KEY: Joi.string().required().description('AWS access key ID'),
-  AWS_SECRET_KEY: Joi.string().required().description('AWS secret access key'),
 
   // JWT
   JWT_SECRET: Joi.string()
     .min(32)
     .required()
     .description('Secret key for signing access tokens'),
- 
+  JWT_REFRESH_SECRET: Joi.string()
+    .min(32)
+    .required()
+    .description('Secret key for signing refresh tokens'),
+
+  // IP Data API
+  IPDATA_API_KEY: Joi.string()
+    .required()
+    .description('IPData API key for geolocation'),
+
+  // Frontend URL for magic links
+  FRONTEND_URL: Joi.string()
+    .uri()
+    .required()
+    .description('Frontend application URL'),
 })
   .unknown() // allow other env vars
   .required();
