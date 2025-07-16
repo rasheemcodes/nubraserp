@@ -41,7 +41,11 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": ["apps/user-service-e2e/**/*"]
+      "exclude": [
+        "apps/user-service-e2e/**/*",
+        "system-service-e2e/**/*",
+        "apps/system-service-e2e/**/*"
+      ]
     },
     {
       "plugin": "@nx/next/plugin",

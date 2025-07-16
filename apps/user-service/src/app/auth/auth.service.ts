@@ -8,7 +8,7 @@ import {
   Inject,
   ForbiddenException
 } from '@nestjs/common';
-import { DRIZZLE_CLIENT } from '@nubras/infra';
+import { DRIZZLE_CLIENT, RedisService } from '@nubras/infra';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { TwilioService } from '@nubras/infra';
 import IPData from 'ipdata';
@@ -22,7 +22,6 @@ import {
 } from '../../schema';
 import { and, desc, eq, gt, inArray, lte, or } from 'drizzle-orm';
 import { randomBytes, randomInt } from 'crypto';
-import type { Redis } from 'ioredis';
 import {
   JWT_ACCESS_EXPIRY,
   JWT_REFRESH_EXPIRY,
@@ -70,7 +69,7 @@ export class AuthService {
 
   constructor(
     @Inject(DRIZZLE_CLIENT) private db: ReturnType<typeof drizzle>,
-    @Inject('REDIS_CLIENT') private redis: Redis,
+    private readonly redis: RedisService,
     private readonly twilio: TwilioService,
     private readonly cfg: ConfigService,
     private readonly jwtService: JwtService,
@@ -160,20 +159,20 @@ export class AuthService {
       const isLocked = await this.security.isAccountLocked(phone);
       console.log(`[OTP Debug] Account lock status: ${isLocked}`);
       
-      // if (isLocked) { 
-      //   const remainingTime = await this.security.getLockoutTimeRemaining(phone);
-      //   await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
-      //     city,
-      //     outcome: 'blocked',
-      //     phone,
-      //     remainingTimeSeconds: remainingTime,
-      //   });
-      //   throw new UnauthorizedException('Account temporarily locked due to security concerns');
-      // }
+      if (isLocked) { 
+        const remainingTime = await this.security.getLockoutTimeRemaining(phone);
+        await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
+          city,
+          outcome: 'blocked',
+          phone,
+          remainingTimeSeconds: remainingTime,
+        });
+        throw new UnauthorizedException('Account temporarily locked due to security concerns');
+      }
 
       // Rate limiting check
       console.log(`[OTP Debug] Checking rate limits`);
-      // await this.security.checkRateLimit(phone, 'otp_request');
+      await this.security.checkRateLimit(phone, 'otp_request');
 
       console.log(`[OTP Debug] Loading user with roles`);
       const user = await this.loadUserWithRoles(phone, start, meta);
@@ -254,20 +253,20 @@ export class AuthService {
       city = (await this.ipdata.lookup(meta.ip)).city || city;
 
       // Check if account is locked
-      // if (await this.security.isAccountLocked(phone)) {
-      //   const remainingTime = await this.security.getLockoutTimeRemaining(phone);
-      //   await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
-      //     city,
-      //     outcome: 'blocked',
-      //     phone,
-      //     remainingTimeSeconds: remainingTime,
-      //   });
-      //   throw new UnauthorizedException('Account temporarily locked');
-      // }
+      if (await this.security.isAccountLocked(phone)) {
+        const remainingTime = await this.security.getLockoutTimeRemaining(phone);
+        await this.audit(null, AuthAction.ACCOUNT_LOCKED, 'AuthService', meta, start, {
+          city,
+          outcome: 'blocked',
+          phone,
+          remainingTimeSeconds: remainingTime,
+        });
+        throw new UnauthorizedException('Account temporarily locked');
+      }
 
 
       // Rate limiting check
-      // await this.security.checkRateLimit(phone, 'otp_verify');
+      await this.security.checkRateLimit(phone, 'otp_verify');
 
       const otp = await this.loadValidOtp(phone, OtpType.LOGIN, code);
       await this.db
@@ -541,7 +540,7 @@ export class AuthService {
       }
     );
 
-    
+
     return { accessToken, refreshToken };
   }
 
@@ -549,7 +548,6 @@ export class AuthService {
     await this.redis.set(
       `${REDIS_REFRESH_PREFIX}${userId}`,
       token,
-      'EX',
       this.expirySeconds(JWT_REFRESH_EXPIRY)
     );
   }

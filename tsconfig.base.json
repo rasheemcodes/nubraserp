@@ -16,6 +16,9 @@
     "baseUrl": ".",
     "paths": {
       "@nubras/infra": ["packages/infra/src/index.ts"],
+      "@nubras/logger": ["packages/logger/src/index.ts"],
+      "@nubras/metrics": ["packages/metrics/src/index.ts"],
+      "@nubras/search-engine": ["packages/search-engine/src/index.ts"],
       "@nubras/ui": ["packages/ui/src/index.ts"]
     }
   },

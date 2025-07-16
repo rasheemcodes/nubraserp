@@ -24,8 +24,11 @@ import {
 import { AccessGuard } from '../../guards/roles.gaurd';
 import { RequireAccess } from '../../decorators/roles.decorator';
 import { CreateUserDto } from './dto/createUser.dto';
+import { SigninDto, VerifyOtpDto, MagicLinkDto } from './dto/signin.dto';
 import { Throttle } from '@nestjs/throttler';
+import { LogMeta, SkipLog } from '@nubras/logger';
 
+@LogMeta({ service: 'auth', module: 'auth' })
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -39,6 +42,7 @@ export class AuthController {
   }
 
   /** Admin-only: create user + immediate magic-link SMS */
+  @LogMeta({ message: 'Successfully registered user', context: "register" , service: "auth" })
   @RequireAccess('system', 'create')
   @UseGuards(AccessGuard)
   @Post('register')
@@ -50,14 +54,16 @@ export class AuthController {
     return this.auth.register(createUserDto, meta);
   }
 
-  /** Public: send a 24h SMS magic-link */
+  /** Public: send magic-link SMS */
+  @LogMeta({ service: 'auth', context: 'sendMagicLink', message: 'Successfully sent magic link' })
   @Post('send-magic-link')
-  async sendMagicLink(@Body('phone') phone: string, @Req() req: Request) {
+  async sendMagicLink(@Body() dto: SigninDto, @Req() req: Request) {
     const meta = this.buildMeta(req);
-    return this.auth.sendMagicLink(phone, meta);
+    return this.auth.sendMagicLink(dto.phone, meta);
   }
 
   /** Admin-only: issue a permanent NFC magic token */
+  @LogMeta({ service: 'auth', context: 'issueMagicLink', message: 'Successfully issued magic link' })
   @RequireAccess('system', 'create')
   @UseGuards(AccessGuard)
   @Post('issue-magic-link')
@@ -67,16 +73,17 @@ export class AuthController {
   }
 
   /** Public: consume magic-link → set JWTs in cookies */
+  @LogMeta({ service: 'auth', context: 'validateMagicLink', message: 'Successfully validated magic link' })
   @HttpCode(HttpStatus.OK)
   @Post('validate/magic-link')
   async validateMagicLink(
-    @Body('token') token: string,
+    @Body() dto: MagicLinkDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ) {
     const meta = this.buildMeta(req);
     const { accessToken, refreshToken } = await this.auth.verifyMagicLink(
-      token,
+      dto.token,
       meta
     );
 
@@ -100,27 +107,28 @@ export class AuthController {
   }
 
   /** Public: send OTP SMS */
+  @LogMeta({ service: 'auth', context: 'sendOtp', message: 'Successfully sent OTP' })
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('signin')
-  async sendOtp(@Body('phone') phone: string, @Req() req: Request) {
+  async sendOtp(@Body() dto: SigninDto, @Req() req: Request) {
     const meta = this.buildMeta(req);
-    return this.auth.sendOtp(phone, meta);
+    return this.auth.sendOtp(dto.phone, meta);
   }
 
   /** Public: verify OTP → set JWTs in cookies */
+  @LogMeta({ service: 'auth', context: 'verifyOtp', message: 'Successfully verified OTP' })
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @Post('verify/otp')
   async verifyOtp(
-    @Body('phone') phone: string,
-    @Body('code') code: string,
+    @Body() dto: VerifyOtpDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
   ) {
     const meta = this.buildMeta(req);
     const { accessToken, refreshToken } = await this.auth.verifyOtp(
-      phone,
-      code,
+      dto.phone,
+      dto.code,
       meta
     );
     
@@ -139,11 +147,11 @@ export class AuthController {
       secure: false,
     });
 
-
-    return { message: 'Logged in via OTP' };
+    return { message: 'Logged in successfully' };
   }
 
   /** Authenticated: logout clears refresh cookie and redis entry */
+  @LogMeta({ service: 'auth', context: 'logout', message: 'Successfully logged out' })
   @HttpCode(HttpStatus.OK)
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -159,6 +167,7 @@ export class AuthController {
   }
 
   /** Authenticated: verify user token and return user data */
+  @LogMeta({ service: 'auth', context: 'verifyUser', message: 'Successfully verified user' })
   @HttpCode(HttpStatus.OK)
   @Post('verify')
   async verifyUser(@Req() req: Request) {
@@ -169,6 +178,7 @@ export class AuthController {
   }
 
   /** Authenticated: verify user token and return user data (GET version) */
+  @SkipLog()
   @Get('me')
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async getCurrentUser(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
