@@ -1,17 +1,20 @@
-  global:
+global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 scrape_configs:
-  # scrape your NestJS API metrics endpoint
-  - job_name: 'erp-api'
-    metrics_path: /metrics
+  - job_name: 'system-service'
+    scheme: http             
+    metrics_path: /api/v1/metrics
     static_configs:
-      - targets: ['host.docker.internal:3000']  # if you run Nest locally
+      - targets: ['host.docker.internal:3001']   
         labels:
-          service: erp-api
+          service: system-service
 
-  # scrape Elasticsearch exporter (optional, if you add one)
-  # - job_name: 'elasticsearch'
-  #   static_configs:
-  #     - targets: ['elasticsearch:9200']
+  - job_name: 'user-service'
+    scheme: http
+    metrics_path: /api/v1/metrics
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+        labels:
+          service: user-service

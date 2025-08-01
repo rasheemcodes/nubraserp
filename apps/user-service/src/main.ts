@@ -10,8 +10,7 @@ import helmet from 'helmet';
 import compression = require('compression');
 import cookieParser from 'cookie-parser';
 import { initLoggerClient, LoggingInterceptor } from '@nubras/logger';
-import { HttpMetricsInterceptor } from '@nubras/metrics';
-import { METRICS_REGISTRY } from '@nubras/metrics';
+import {  HttpMetricsInterceptor, HttpMetricsService } from '@nubras/metrics';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -66,15 +65,13 @@ async function bootstrap() {
 
   await initLoggerClient('amqp://admin:admin123@localhost:5672');
   app.useGlobalInterceptors(new LoggingInterceptor(new Reflector()));
-  app.useGlobalInterceptors(
-    new HttpMetricsInterceptor(app.get(METRICS_REGISTRY))
-  );
+  app.useGlobalInterceptors(new HttpMetricsInterceptor(new HttpMetricsService()));
 
   // API prefix
   app.setGlobalPrefix('api/v1');
 
   const port = configService.get('PORT', 3000);
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 User Service running on: http://localhost:${port}/api/v1`);
   console.log(`🔒 CORS enabled for: ${frontendUrl}`);

@@ -15,7 +15,7 @@
       "defaultConfiguration": "development",
       "configurations": {
         "development": {
-          "args": ["node-env=development"]
+          "args": ["node-env=development"],
         },
         "production": {
           "args": ["node-env=production"]
@@ -27,16 +27,18 @@
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
       "dependsOn": ["build"],
-      "options": {
+      "options": {    
         "buildTarget": "user-service:build",
         "runBuildTargetDependencies": false
       },
       "configurations": {
         "development": {
-          "buildTarget": "user-service:build:development"
+          "buildTarget": "user-service:build:development",
+          "watch": true
         },
         "production": {
-          "buildTarget": "user-service:build:development"
+          "buildTarget": "user-service:build:development",
+          "watch": false
         }
       }
     },

@@ -28,10 +28,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${cormorantGaramond.variable} ${inter.variable} antialiased bg-primary`}
+        className={`${cormorantGaramond.variable} ${inter.variable} antialiased `}
       >
         <NavBar />
-        {children}
+        <div>
+          {children}
+        </div>
       </body>
     </html>
   );

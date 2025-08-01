@@ -2,6 +2,7 @@
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AppModule } from './app/app.module';
+import { HttpMetricsInterceptor, HttpMetricsService } from '@nubras/metrics';
 
 async function bootstrap() {
   // Create the HTTP application first
@@ -17,7 +18,7 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.RMQ,
     options: {
-      urls: ['amqp://admin:admin123@localhost:5672'],
+      urls: ['amqp://admin:admin123@localhost:5672'], 
       queue: 'system-service-queue',
       queueOptions: {
         durable: true,
@@ -29,10 +30,13 @@ async function bootstrap() {
     },
   });
 
-  // Start both HTTP server and microservice
+  app.useGlobalInterceptors(new HttpMetricsInterceptor(new HttpMetricsService()));
+
+
+  // Start both HTTP server and microservice 
   await app.startAllMicroservices();
   const port = process.env.PORT || 3001;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   
   console.log(`🚀 System-service HTTP server running on: http://localhost:${port}/api/v1`);
   console.log('📡 System-service microservice is listening for messages...');

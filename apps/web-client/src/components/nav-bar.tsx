@@ -2,14 +2,13 @@
 
 import {
   Search,
-  ShoppingCart,
-  User,
   Watch,
   Footprints,
   Bookmark,
   ArrowUpRight,
   Menu,
   X,
+  History,
 } from 'lucide-react';
 import React, { useRef, useState, useEffect } from 'react';
 import { Button } from './ui/button';
@@ -24,6 +23,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from './ui/sheet';
+import { usePathname } from 'next/navigation';
+import CartSheet from './cartSheet';
 
 export default function NavBar() {
   const navRef = useRef<HTMLDivElement>(null);
@@ -32,6 +33,7 @@ export default function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { scrollY } = useScroll();
+  const pathname = usePathname();
 
   const [vh, setVh] = useState(100); // fallback
 
@@ -41,6 +43,7 @@ export default function NavBar() {
     }
   }, []);
 
+  // Always enable scroll transform regardless of pathname
   const navShow = useTransform(scrollY, [0, vh * 0.1], [-100, 0]);
 
   // Handle scroll
@@ -66,9 +69,9 @@ export default function NavBar() {
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
         >
           <path d="M10 2h4" />
           <path d="M12 2v4" />
@@ -94,10 +97,7 @@ export default function NavBar() {
           src="/icons/jacket.svg"
           className="stroke-2"
           style={{
-            filter:
-              isMobileMenuOpen || isFocused || isScrolled
-                ? 'invert(0) brightness(1000%)'
-                : 'invert(1) brightness(1000%)',
+            filter: 'invert(1) brightness(1000%)',
           }}
           alt="Jackets"
           width={16}
@@ -153,17 +153,22 @@ export default function NavBar() {
     },
   ];
 
+  const yStyle = pathname === '/' ? navShow : 0;
+
   return (
     <motion.div
       ref={navRef}
-      style={{ y: navShow }}
+      style={{ y: yStyle }}
       className={`fixed top-0 z-[1000] w-full h-12 px-5 md:px-20 flex justify-between items-center
-        transition-all duration-300 ease-in-out
-        ${
-          isFocused || isMobileMenuOpen || isScrolled
-            ? 'bg-primary/95 text-black'
-            : 'bg-transparent text-white'
-        }`}
+    transition-all duration-300 ease-in-out 
+    ${
+      isFocused ||
+      isMobileMenuOpen ||
+      (isScrolled && pathname === '/') ||
+      pathname !== '/'
+        ? 'bg-primary/95 text-primary-foreground'
+        : 'bg-transparent text-zinc-50'
+    }`}
     >
       {/* Mobile Menu Button */}
       <button
@@ -181,13 +186,15 @@ export default function NavBar() {
       {/* Animated Logo */}
       <motion.div
         style={{ opacity: 1 }}
-        className="text-lg font-serif font-bold tracking-wider"
+        className="text-2xl font-serif font-bold tracking-wider"
       >
+        <Link href="/">
         Alnubras
+        </Link>
       </motion.div>
 
       {/* Center: Nav */}
-      <div className="hidden md:block">
+      <div className={`hidden ${pathname === '/' ? 'md:block' : 'md:hidden'}`}>
         <ul className="flex items-center gap-x-6">
           {navigations.map((nav) => (
             <li key={nav.url} className="relative">
@@ -196,7 +203,7 @@ export default function NavBar() {
                   setIsFocused(true);
                   setSelectedCategory(nav.id);
                 }}
-                className="flex items-center gap-x-2 h-12 px-2 focus:outline-none focus:border-b-4 focus:border-gray-800 transition-all duration-200 ease-in-out"
+                className="flex items-center gap-x-2 h-12 px-2 focus:outline-none focus:border-b-4 focus:border-border transition-all duration-200 ease-in-out"
               >
                 {nav.icon}
                 {nav.label}
@@ -233,7 +240,7 @@ export default function NavBar() {
                   );
                 })()}
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-xl font-serif mb-4 capitalize text-foreground">
+                  <h2 className="text-xl font-serif mb-4 capitalize">
                     Nubras {selectedCategory}
                   </h2>
                   <div className="grid grid-cols-2 gap-y-4 gap-x-8">
@@ -243,7 +250,7 @@ export default function NavBar() {
                         <Link
                           href={item.url}
                           key={item.url}
-                          className="flex items-center gap-x-2 text-accent hover:underline underline-2 underline-offset-2 hover:text-accent/80 transition-colors w-full"
+                          className="flex items-center gap-x-2 text-accent-foreground hover:text-accent-foreground/80 hover:underline underline-2 underline-offset-2  transition-colors w-full"
                         >
                           <ArrowUpRight className="h-4 w-4 flex-shrink-0" />
                           <span className="truncate">{item.label}</span>
@@ -270,7 +277,7 @@ export default function NavBar() {
               <input
                 type="search"
                 placeholder="Search"
-                className="bg-transparent border-b border-gray-400 w-full focus:outline-none"
+                className="bg-white text-black border-b border-gray-400 w-full focus:outline-none"
               />
             </div>
           </div>
@@ -345,7 +352,7 @@ export default function NavBar() {
               <input
                 type="search"
                 placeholder="Search products..."
-                className="w-full bg-transparent border-b-2 border-gray-400 focus:border-primary focus:outline-none py-1 px-2 text-sm"
+                className="w-full bg-white text-black border-b-2 border-gray-400 focus:border-primary focus:outline-none py-1 px-2 text-sm"
                 onBlur={(e) => {
                   if (!e.target.value) setIsFocused(false);
                 }}
@@ -446,95 +453,13 @@ export default function NavBar() {
           </SheetContent>
         </Sheet>
 
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <ShoppingCart />
-            </Button>
-          </SheetTrigger>
+        <CartSheet />
 
-          <SheetContent
-            side="right"
-            className="w-[380px] sm:w-[500px] p-6 z-[10000]"
-          >
-            <SheetHeader>
-              <SheetTitle className="text-xl font-serif">
-                Shopping Cart
-              </SheetTitle>
-              <SheetDescription className="text-sm text-muted-foreground">
-                Manage your cart items
-              </SheetDescription>
-            </SheetHeader>
-
-            <div className="mt-6 space-y-5">
-              {[
-                {
-                  name: 'Premium Kandora',
-                  price: 'AED 899',
-                  image: '/samples/kandora.webp',
-                  quantity: 1,
-                },
-                {
-                  name: 'Classic Watch',
-                  price: 'AED 1,299',
-                  image: '/samples/kandora.webp',
-                  quantity: 2,
-                },
-              ].map((item, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-4 group hover:bg-muted p-3 rounded-md transition"
-                >
-                  <div className="rounded-md overflow-hidden">
-                    <Image
-                      width={80}
-                      height={80}
-                      src={item.image}
-                      alt={item.name}
-                      className="h-20 w-20 object-cover transition-transform group-hover:scale-105"
-                    />
-                  </div>
-
-                  <div className="flex-1">
-                    <h4 className="text-sm font-medium">{item.name}</h4>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {item.price}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <Button variant="outline" size="icon" className="h-6 w-6">
-                        –
-                      </Button>
-                      <span className="text-sm">{item.quantity}</span>
-                      <Button variant="outline" size="icon" className="h-6 w-6">
-                        +
-                      </Button>
-                    </div>
-                  </div>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-
-              <div className="pt-5 border-t space-y-4">
-                <div className="flex justify-between items-center">
-                  <p className="text-sm text-muted-foreground">Subtotal</p>
-                  <p className="font-medium">AED 3,497</p>
-                </div>
-                <Button className="w-full">Checkout</Button>
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
-
-        <Button variant="ghost" size="icon">
-          <User />
-        </Button>
+        <Link href="/orders">
+          <Button variant="ghost" size="icon">
+            <History />
+          </Button>
+        </Link>
       </div>
     </motion.div>
   );

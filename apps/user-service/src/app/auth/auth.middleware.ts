@@ -16,6 +16,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
 import { publishLog } from '@nubras/logger';
+import { HttpMetricsService } from '@nubras/metrics';
 
 interface ModuleAccess {
   module: string;
@@ -27,7 +28,8 @@ export class AuthMiddleware implements NestMiddleware {
   constructor(
     private readonly jwtService: JwtService,
     private readonly authService: AuthService,
-    private readonly cfg: ConfigService
+    private readonly cfg: ConfigService,
+    private readonly httpMetrics: HttpMetricsService
   ) {}
 
   async use(req: Request, res: Response, next: NextFunction) {
@@ -46,6 +48,7 @@ export class AuthMiddleware implements NestMiddleware {
 
     // Helper function to log and throw with proper logging
     const logAndThrow = (message: string, error: Error, statusCode = 401) => {
+      this.httpMetrics.incrementError(req.method, req.url, statusCode.toString(), req.headers['user-agent'] || 'unknown');
       publishLog({
         level: 'warn',
         service: 'auth',

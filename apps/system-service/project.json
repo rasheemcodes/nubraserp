@@ -28,7 +28,8 @@
       },
       "configurations": {
         "development": {
-          "buildTarget": "system-service:build:development"
+          "buildTarget": "system-service:build:development",
+          "watch": true
         },
         "production": {
           "buildTarget": "system-service:build:production"

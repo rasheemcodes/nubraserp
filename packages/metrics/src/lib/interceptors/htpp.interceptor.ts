@@ -1,60 +1,99 @@
-// src/metrics/http.interceptor.ts
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
-    Injectable, NestInterceptor, ExecutionContext, CallHandler
-  } from '@nestjs/common';
-  import { Observable, tap } from 'rxjs';
-  import { Counter, Histogram, Gauge, Registry } from 'prom-client';
-  import { METRICS_REGISTRY } from '../metrics.module';
-  import { Inject } from '@nestjs/common';
-  
-  // Grab the already-registered metrics
-  @Injectable()
-  export class HttpMetricsInterceptor implements NestInterceptor {
-    private reqCounter: Counter<string>;
-    private inflight: Gauge<string>;
-    private duration: Histogram<string>;
-    private errCounter: Counter<string>;
-  
-    constructor(
-      @Inject(METRICS_REGISTRY) private registry: Registry
-    ) {
-      this.reqCounter = this.registry.getSingleMetric('erp_http_requests_total') as Counter<string>;
-      this.inflight   = this.registry.getSingleMetric('erp_http_in_flight_requests') as Gauge<string>;
-      this.duration   = this.registry.getSingleMetric('erp_http_request_duration_seconds') as Histogram<string>;
-      this.errCounter = this.registry.getSingleMetric('erp_http_errors_total') as Counter<string>;
-    }
-  
-    intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
-      const req  = ctx.switchToHttp().getRequest();
-      const res  = ctx.switchToHttp().getResponse();
-      const method = req.method as string;
-      this.inflight.inc();
-  
-      const start = process.hrtime();
-      return next.handle().pipe(
-        tap({
-          next: () => {
-            const status = res.statusCode.toString();
-            this.inflight.dec();
-            this.reqCounter.inc({ method, status });
-            const [s, ns] = process.hrtime(start);
-            this.duration.observe({ method, status }, s + ns/1e9);
-            console.log('HTTP Metrics:', {
-              method,
-              status,
-              duration: s + ns/1e9,
-            });
-          },
-          error: () => {
-            const status = res.statusCode?.toString() || '500';
-            this.inflight.dec();
-            this.errCounter.inc({ method, status });
-            this.reqCounter.inc({ method, status });
-            const [s, ns] = process.hrtime(start);
-            this.duration.observe({ method, status }, s + ns/1e9);
-          },
-        })
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+} from '@nestjs/common';
+import { catchError, finalize } from 'rxjs/operators';
+import { HttpMetricsService } from '../services/httpMetrics.service';
+import { extractUserAgentLabel } from '../helpers/extractBrowserName';
+import { throwError } from 'rxjs';
+
+@Injectable()
+export class HttpMetricsInterceptor implements NestInterceptor {
+  constructor(private readonly httpMetrics: HttpMetricsService) {}
+
+  intercept(ctx: ExecutionContext, next: CallHandler) {
+    console.log('Intercepting request');
+    const req = ctx.switchToHttp().getRequest();
+    const res = ctx.switchToHttp().getResponse();
+
+    const route = req.route?.path || req.url;
+    const method = req.method;
+    const userAgent = extractUserAgentLabel(req.headers['user-agent'] || '');
+
+    const endTimer = this.httpMetrics.startTimer(method, route, userAgent);
+    this.httpMetrics.incrementActiveRequests(method, route, userAgent);
+
+    // 🔍 Capture request size from Content-Length
+    const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+    if (!isNaN(contentLength) && contentLength > 0) {
+      this.httpMetrics.observeRequestSize(
+        method,
+        route,
+        userAgent,
+        contentLength
       );
     }
+
+    // 🔍 Prepare to measure response size
+    const chunks: Buffer[] = [];
+    const originalWrite = res.write;
+    const originalEnd = res.end;
+
+    res.write = (...args: any[]) => {
+      if (args[0]) chunks.push(Buffer.from(args[0]));
+      return originalWrite.apply(res, args);
+    };
+
+    res.end = (...args: any[]) => {
+      if (args[0]) chunks.push(Buffer.from(args[0]));
+      const responseSize = Buffer.concat(chunks).length;
+      this.httpMetrics.observeResponseSize(
+        method,
+        route,
+        userAgent,
+        responseSize
+      );
+      return originalEnd.apply(res, args);
+    };
+
+    return next.handle().pipe(
+      finalize(() => {
+        if (res.statusCode < 400) {
+          this.httpMetrics.incrementRequest(
+            method,
+            route,
+            res.statusCode,
+            userAgent
+          );
+        }
+        this.httpMetrics.decrementActiveRequests(method, route, userAgent);
+        console.log('Ending timer for:', method, route, userAgent);
+        endTimer();
+      }),
+      catchError((error) => {
+        const status =
+          typeof error.getStatus === 'function' ? error.getStatus() : 500;
+
+        console.log(
+          'Incrementing error for:',
+          method,
+          status,
+          route,
+          userAgent
+        );
+
+        this.httpMetrics.incrementError(
+          method,
+          route,
+          String(status),
+          userAgent
+        );
+
+        return throwError(() => error);
+      })
+    );
   }
-  
+}

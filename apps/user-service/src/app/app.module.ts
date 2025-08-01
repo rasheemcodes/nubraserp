@@ -18,11 +18,10 @@ import { RolesModule } from './roles/roles.module';
 import { AuthModule } from './auth/auth.module';
 import { AuthMiddleware } from './auth/auth.middleware';
 import { AuthService } from './auth/auth.service';
-import { MetricsModule } from '@nubras/metrics';
+import {  MetricsController, MetricsModule } from '@nubras/metrics';
 
 @Module({
   imports: [
-    MetricsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema,
@@ -53,10 +52,13 @@ import { MetricsModule } from '@nubras/metrics';
         rabbitmq: {
           name: 'RABBITMQ_SERVICE',
           urls: ['amqp://admin:admin123@localhost:5672'],
-          queue: 'system-service-queue',
+          queue: 'system-service-queue', 
         },
       }),
     }),
+
+    // 3️⃣ finally, wire in HTTP + Exceptions + Drizzle + System metrics
+    MetricsModule,
     ThrottlerModule.forRoot([
       {
         name: 'short',
@@ -91,6 +93,7 @@ import { MetricsModule } from '@nubras/metrics';
   providers: [
     AppService,
     AuthService,
+    MetricsController,
     // Remove the manual Redis client provider since it's now handled by InfraModule
   ],
 })
@@ -102,7 +105,10 @@ export class AppModule implements NestModule {
       .exclude(
         { path: 'auth/signin', method: RequestMethod.POST },
         { path: 'auth/verify/otp', method: RequestMethod.POST },
-        { path: 'auth/send-magic-link', method: RequestMethod.POST }
+        { path: 'auth/send-magic-link', method: RequestMethod.POST },
+        { path: 'metrics', method: RequestMethod.GET },
+        { path: 'metrics/dashboard', method: RequestMethod.GET },
+        { path: 'error', method: RequestMethod.POST }
       )
       .forRoutes('*');
   } 

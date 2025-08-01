@@ -9,12 +9,10 @@ import { AuditListenerController } from './listeners/audits.listener';
 import { AuditHttpController } from './controllers/audits.controller';
 import { LogHttpController } from './controllers/logs.controller';
 import { SearchEngineModule } from '@nubras/search-engine';
-import { MetricsController } from './controllers/metrics.controller';
-import { MetricsModule } from '@nubras/metrics';
+import { HttpMetricsService, MetricsController } from '@nubras/metrics';
 
-@Module({
+@Module({ 
   imports: [
-    MetricsModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
@@ -30,6 +28,6 @@ import { MetricsModule } from '@nubras/metrics';
     SearchEngineModule,
   ],
   controllers: [AppController, AuditListenerController, LogListenerController, AuditHttpController, LogHttpController, MetricsController],
-  providers: [AppService],
+  providers: [AppService, HttpMetricsService],
 })
 export class AppModule {}

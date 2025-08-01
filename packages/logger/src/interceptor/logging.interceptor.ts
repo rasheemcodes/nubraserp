@@ -98,6 +98,15 @@ export class LoggingInterceptor implements NestInterceptor {
           tags: logMeta.tags,
           context: logMeta.context || logMeta.module,
         });
+
+        console.log('logMeta', {
+          level,
+          service: logMeta.service,
+          durationMs: Date.now() - now,
+          message: logMeta.message || `${req.method} ${req.url}`,
+          traceId,
+          requestId,
+        });
       }),
       catchError((err) => {
         // Always an error-level log
