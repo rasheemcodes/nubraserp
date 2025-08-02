@@ -9,12 +9,20 @@ import {
   Empty,
 } from '@nubras/protos';
 import { Metadata } from '@grpc/grpc-js';
+import { LogMeta } from '@nubras/logger';
 
 @Controller()
 export class InventoryController implements InventoryServiceController {
-  private readonly logger = new Logger(InventoryController.name);
+  private readonly logger = new Logger(InventoryController.name); 
   constructor(private readonly inventoryService: InventoryService) {}
 
+  
+  @LogMeta({
+    service: 'inventory-service',
+    message: 'Successfully said hello!',
+    tags: ['inventory', 'gRPC'],
+    context: 'inventory',
+  })
   @GrpcMethod('InventoryService', 'SayHello')
   sayHello(_: Empty, metadata: Metadata): HelloResponse {
     this.logger.log(metadata);

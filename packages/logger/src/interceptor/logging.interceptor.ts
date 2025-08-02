@@ -35,7 +35,7 @@ function levelFromStatus(status: number): 'debug' | 'info' | 'warn' | 'error' {
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(private readonly reflector: Reflector,private readonly serviceName: string) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const skipLog = this.reflector.get<boolean>(
@@ -73,7 +73,7 @@ export class LoggingInterceptor implements NestInterceptor {
       context.getClass()
     );
     const logMeta: LogMetadata = {
-      service: (req.headers['x-service-name'] as string) || 'unknown-service',
+      service: this.serviceName || (req.headers['x-service-name'] as string) || 'unknown-service',
       ...controllerMeta,
       ...handlerMeta,
     };

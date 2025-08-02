@@ -64,7 +64,7 @@ async function bootstrap() {
   );
 
   await initLoggerClient('amqp://admin:admin123@localhost:5672');
-  app.useGlobalInterceptors(new LoggingInterceptor(new Reflector()));
+  app.useGlobalInterceptors(new LoggingInterceptor(new Reflector(), 'user-service'));
   app.useGlobalInterceptors(new HttpMetricsInterceptor(new HttpMetricsService()));
 
   // API prefix

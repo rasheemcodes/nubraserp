@@ -9,6 +9,11 @@ import { AppModule } from './app/app.module';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { join } from 'path';
 import { registerWithConsul } from '@nubras/common';
+import { GrpcLoggerInterceptor } from '@nubras/logger';
+import { Reflector } from '@nestjs/core';
+import { initLoggerClient } from '@nubras/logger';
+import { HttpMetricsInterceptor } from '@nubras/metrics';
+import { HttpMetricsService } from '@nubras/metrics';
 
 const tsProtoPath = join(process.cwd(), 'packages/protos/src');
 
@@ -28,7 +33,10 @@ async function bootstrap() {
     }
   );
 
-  // app.useGlobalInterceptors(new GrpcTraceInterceptor());
+  await initLoggerClient('amqp://admin:admin123@localhost:5672');
+
+  app.useGlobalInterceptors(new GrpcLoggerInterceptor(new Reflector()));
+  app.useGlobalInterceptors(new HttpMetricsInterceptor(new HttpMetricsService()));
 
   app.enableShutdownHooks();
   await app.listen();

@@ -1,36 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger, HttpStatus } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { RpcException } from '@nestjs/microservices';
-import { Metadata } from '@grpc/grpc-js';
+import { Metadata, status as GrpcStatus } from '@grpc/grpc-js';
 import { v4 as uuidv4 } from 'uuid';
-import { LOG_META_KEY, LogMetadata, publishLog } from '@nubras/logger';
+import { publishLog } from '../lib/logger';
 import { Reflector } from '@nestjs/core';
+import { LOG_META_KEY, LogMetadata } from '../decorator/log-meta.decorator';
 
 function levelFromGrpcStatus(status: number): 'debug' | 'info' | 'warn' | 'error' {
-  // Based on gRPC status codes: https://grpc.github.io/grpc/core/md_doc_statuscodes.html
   switch (status) {
-    case 0: // OK
+    case GrpcStatus.OK:
       return 'info';
-    case 1: // CANCELLED
-    case 4: // DEADLINE_EXCEEDED
-    case 8: // RESOURCE_EXHAUSTED
-    case 14: // UNAVAILABLE
+    case GrpcStatus.CANCELLED:
+    case GrpcStatus.DEADLINE_EXCEEDED:
+    case GrpcStatus.RESOURCE_EXHAUSTED:
+    case GrpcStatus.UNAVAILABLE:
       return 'warn';
-    case 2: // UNKNOWN
-    case 3: // INVALID_ARGUMENT
-    case 5: // NOT_FOUND
-    case 7: // PERMISSION_DENIED
-    case 9: // FAILED_PRECONDITION
-    case 10: // ABORTED
-    case 11: // OUT_OF_RANGE
-    case 13: // INTERNAL
-    case 15: // DATA_LOSS
-    case 16: // UNAUTHENTICATED
-      return 'error';
     default:
-      return 'debug';
+      return 'error';
   }
 }
 
@@ -67,8 +56,8 @@ export class GrpcLoggerInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: (value) => {
-          const status = value.statusCode;
+        next: () => {
+          const status = GrpcStatus.OK;
           const level = levelFromGrpcStatus(status);
           publishLog({
             level,
@@ -103,7 +92,10 @@ export class GrpcLoggerInterceptor implements NestInterceptor {
               },
               method: context.getHandler().name,
               path: context.getClass().name,
-              statusCode: typeof err.getError() === 'object' ? (err.getError() as any).code : HttpStatus.INTERNAL_SERVER_ERROR,
+              statusCode: typeof err.getError() === 'object' && (err.getError() as any).code !== undefined
+  ? (err.getError() as any).code
+  : GrpcStatus.UNKNOWN,
+
               durationMs: Date.now() - now,
               ip: "127.0.0.1", 
               tags: logMeta.tags,

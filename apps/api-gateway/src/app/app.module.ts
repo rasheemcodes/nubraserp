@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GrpcClientModule } from '@nubras/common';
+import { MetricsController, MetricsModule } from '@nubras/metrics';
 
 @Module({
   imports: [
@@ -11,8 +12,9 @@ import { GrpcClientModule } from '@nubras/common';
       packageName: 'inventory',
       protoPath: 'inventory/inventory.proto',
     }),
+    MetricsModule
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, MetricsController],
 })
 export class AppModule {}
