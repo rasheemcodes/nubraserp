@@ -23,3 +23,10 @@ scrape_configs:
       - targets: ['host.docker.internal:5001']
         labels:
           service: api-gateway
+
+  - job_name: 'inventory-service'
+    metrics_path: /api/v1/metrics
+    static_configs:
+      - targets: ['host.docker.internal:9102']
+        labels:
+          service: inventory-service

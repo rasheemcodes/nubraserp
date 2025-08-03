@@ -12,8 +12,9 @@ import { registerWithConsul } from '@nubras/common';
 import { GrpcLoggerInterceptor } from '@nubras/logger';
 import { Reflector } from '@nestjs/core';
 import { initLoggerClient } from '@nubras/logger';
-import { HttpMetricsInterceptor } from '@nubras/metrics';
-import { HttpMetricsService } from '@nubras/metrics';
+import { GrpcMetricsInterceptor } from '@nubras/metrics';
+import { GrpcMetricsService } from '@nubras/metrics';
+import { GrpcExceptionFilter } from '@nubras/metrics';
 
 const tsProtoPath = join(process.cwd(), 'packages/protos/src');
 
@@ -36,8 +37,8 @@ async function bootstrap() {
   await initLoggerClient('amqp://admin:admin123@localhost:5672');
 
   app.useGlobalInterceptors(new GrpcLoggerInterceptor(new Reflector()));
-  app.useGlobalInterceptors(new HttpMetricsInterceptor(new HttpMetricsService()));
-
+  app.useGlobalInterceptors(new GrpcMetricsInterceptor(new GrpcMetricsService()));
+  app.useGlobalFilters(new GrpcExceptionFilter(new GrpcMetricsService(), new Reflector()));
   app.enableShutdownHooks();
   await app.listen();
   Logger.log(`🚀 GRPC server is running on: http://localhost:50051`);
@@ -47,6 +48,11 @@ async function bootstrap() {
     protocol: 'tcp',
   });
   Logger.log(`🚀 Inventory service registered with Consul`);
+
+  const metricsApp = await NestFactory.create(AppModule);
+  metricsApp.setGlobalPrefix('api/v1');
+  await metricsApp.listen(9102); // HTTP server exposes Prometheus metrics
+  Logger.log(`📊 Prometheus metrics exposed at http://localhost:9102/api/v1/metrics`);
 }
 
 bootstrap();

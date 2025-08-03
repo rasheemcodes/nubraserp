@@ -25,10 +25,14 @@ function levelFromGrpcStatus(status: number): 'debug' | 'info' | 'warn' | 'error
 
 @Injectable()
 export class GrpcLoggerInterceptor implements NestInterceptor {
-  constructor(private readonly reflector: Reflector) { }
+  
   private readonly logger = new Logger(GrpcLoggerInterceptor.name);
+  constructor(private readonly reflector: Reflector) {
+    this.logger.log("GrpcLoggerInterceptor initialized");
+   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    this.logger.log("GrpcLoggerInterceptor activated");
     const host = context.switchToRpc();
     const metadata: Metadata = host.getContext(); // Access the metadata from the execution context
     const traceId = metadata.get('trace-id')[0]
